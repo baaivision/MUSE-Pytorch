@@ -84,3 +84,5 @@ The generated images are stored in `OUTPUT_DIR/eval_samples`. Each time the scri
 * [mage](https://github.com/LTH14/mage)
 * [maskgit](https://github.com/google-research/maskgit)
 * [open-clip](https://github.com/mlfoundations/open_clip)
+
+Thanks to all authors for their work!
