@@ -1,4 +1,4 @@
-## MUSE-Pytorch
+## MUSE-Pytorch🎨
 
 This is a PyTorch implementation of [MUSE](https://arxiv.org/abs/2301.00704) with pre-trained checkpoints on ImageNet and CC3M.
 
