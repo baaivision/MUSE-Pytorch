@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from torch.utils.data import Dataset
 from torchvision import datasets
 import torchvision.transforms as transforms
@@ -10,6 +12,10 @@ import os
 import glob
 import einops
 import torchvision.transforms.functional as F
+from webdata import get_data
+from loguru import logger
+
+print = logger.info
 
 
 class UnlabeledDataset(Dataset):
@@ -53,6 +59,9 @@ class CFGDataset(Dataset):  # for classifier free guidance
             y = self.empty_token
         return x, y
 
+    def sample_label(self, **kwargs):
+        return self.dataset.sample_label(**kwargs)
+
 
 class DatasetFactory(object):
 
@@ -75,7 +84,6 @@ class DatasetFactory(object):
             return dataset
 
     def unpreprocess(self, v):  # to B C H W and [0, 1]
-        v = 0.5 * (v + 1.)
         v.clamp_(0., 1.)
         return v
 
@@ -160,16 +168,18 @@ class FeatureDataset(Dataset):
     def __init__(self, path):
         super().__init__()
         self.path = path
-        # names = sorted(os.listdir(path))
-        # self.files = [os.path.join(path, name) for name in names]
+        data_path = f'{path}/train.npy'
+        if os.path.exists(data_path):
+            self.data = np.load(data_path)
 
     def __len__(self):
         return 1_281_167 * 2  # consider the random flip
 
     def __getitem__(self, idx):
-        path = os.path.join(self.path, f'{idx}.npy')
-        z, label = np.load(path, allow_pickle=True)
-        return z, label
+        return self.data[idx][1:], self.data[idx][0:1]
+
+    def sample_label(self, n_samples, device):
+        return torch.randint(0, 1000, (n_samples, 1), device=device)
 
 
 class ImageNet256Features(DatasetFactory):  # the moments calculated by Stable Diffusion image encoder
@@ -179,11 +189,13 @@ class ImageNet256Features(DatasetFactory):  # the moments calculated by Stable D
         self.train = FeatureDataset(path)
         print('Prepare dataset ok')
         self.K = 1000
+        self.contexts = einops.repeat(np.arange(5), 'ncol -> (nrow ncol) 1', nrow=2)
+        self.empty_context = np.array([self.K], dtype=np.long)
 
         if cfg:  # classifier free guidance
             assert p_uncond is not None
             print(f'prepare the dataset for classifier free guidance with p_uncond={p_uncond}')
-            self.train = CFGDataset(self.train, p_uncond, self.K)
+            self.train = CFGDataset(self.train, p_uncond, self.empty_context)
 
     @property
     def data_shape(self):
@@ -194,7 +206,7 @@ class ImageNet256Features(DatasetFactory):  # the moments calculated by Stable D
         return f'assets/fid_stats/fid_stats_imagenet256_guided_diffusion.npz'
 
     def sample_label(self, n_samples, device):
-        return torch.randint(0, 1000, (n_samples,), device=device)
+        return torch.randint(0, 1000, (n_samples, 1), device=device)
 
 
 class ImageNet512Features(DatasetFactory):  # the moments calculated by Stable Diffusion image encoder
@@ -223,17 +235,19 @@ class ImageNet512Features(DatasetFactory):  # the moments calculated by Stable D
 
 
 class ImageNet(DatasetFactory):
-    def __init__(self, path, resolution, random_crop=False, random_flip=True):
+    def __init__(self, path, resolution, random_crop=False, random_flip=True, split='train'):
         super().__init__()
 
         print(f'Counting ImageNet files from {path}')
-        train_files = _list_image_files_recursively(os.path.join(path, 'train'))
-        class_names = [os.path.basename(path).split("_")[0] for path in train_files]
+        train_files = _list_image_files_recursively(os.path.join(path, split))
+        # class_names = [os.path.basename(path).split("_")[0] for path in train_files]
+        class_names = [Path(path).parent.name for path in train_files]
         sorted_classes = {x: i for i, x in enumerate(sorted(set(class_names)))}
         train_labels = [sorted_classes[x] for x in class_names]
         print('Finish counting ImageNet files')
 
-        self.train = ImageDataset(resolution, train_files, labels=train_labels, random_crop=random_crop, random_flip=random_flip)
+        self.train = ImageDataset(resolution, train_files, labels=train_labels, random_crop=random_crop,
+                                  random_flip=random_flip)
         self.resolution = resolution
         if len(self.train) != 1_281_167:
             print(f'Missing train samples: {len(self.train)} < 1281167')
@@ -268,19 +282,19 @@ def _list_image_files_recursively(data_dir):
         ext = entry.split(".")[-1]
         if "." in entry and ext.lower() in ["jpg", "jpeg", "png", "gif"]:
             results.append(full_path)
-        elif os.listdir(full_path):
+        elif Path(full_path).is_dir():
             results.extend(_list_image_files_recursively(full_path))
     return results
 
 
 class ImageDataset(Dataset):
     def __init__(
-        self,
-        resolution,
-        image_paths,
-        labels,
-        random_crop=False,
-        random_flip=True,
+            self,
+            resolution,
+            image_paths,
+            labels,
+            random_crop=False,
+            random_flip=True,
     ):
         super().__init__()
         self.resolution = resolution
@@ -294,9 +308,17 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, idx):
         path = self.image_paths[idx]
-        pil_image = Image.open(path)
-        pil_image.load()
-        pil_image = pil_image.convert("RGB")
+        while True:
+            try:
+                pil_image = Image.open(path)
+                pil_image.load()
+                pil_image = pil_image.convert("RGB")
+            except OSError as e:
+                print(f"Catched exception: {str(e)}. Re-trying...")
+                import time
+                time.sleep(1)
+            else:
+                break
 
         if self.random_crop:
             arr = random_crop_arr(pil_image, self.resolution)
@@ -306,7 +328,7 @@ class ImageDataset(Dataset):
         if self.random_flip and random.random() < 0.5:
             arr = arr[:, ::-1]
 
-        arr = arr.astype(np.float32) / 127.5 - 1
+        arr = arr.astype(np.float32) / 255.
 
         label = np.array(self.labels[idx], dtype=np.int64)
         return np.transpose(arr, [2, 0, 1]), label
@@ -329,7 +351,7 @@ def center_crop_arr(pil_image, image_size):
     arr = np.array(pil_image)
     crop_y = (arr.shape[0] - image_size) // 2
     crop_x = (arr.shape[1] - image_size) // 2
-    return arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size]
+    return arr[crop_y: crop_y + image_size, crop_x: crop_x + image_size]
 
 
 def random_crop_arr(pil_image, image_size, min_crop_frac=0.8, max_crop_frac=1.0):
@@ -468,7 +490,21 @@ class MSCOCODatabase(Dataset):
 def get_feature_dir_info(root):
     files = glob.glob(os.path.join(root, '*.npy'))
     files_caption = glob.glob(os.path.join(root, '*_*.npy'))
+
     num_data = len(files) - len(files_caption)
+    n_captions = {k: 0 for k in range(num_data)}
+    for f in files_caption:
+        name = os.path.split(f)[-1]
+        k1, k2 = os.path.splitext(name)[0].split('_')
+        n_captions[int(k1)] += 1
+    return num_data, n_captions
+
+
+def get_feature_dir_info_vq(root, input_type):
+    files = glob.glob(os.path.join(root, input_type, '*.npy'))
+    files_caption = glob.glob(os.path.join(root, '*_*.npy'))
+
+    num_data = len(files)
     n_captions = {k: 0 for k in range(num_data)}
     for f in files_caption:
         name = os.path.split(f)[-1]
@@ -487,18 +523,28 @@ class MSCOCOFeatureDataset(Dataset):
         return self.num_data
 
     def __getitem__(self, index):
-        z = np.load(os.path.join(self.root, f'{index}.npy'))
-        k = random.randint(0, self.n_captions[index] - 1)
-        c = np.load(os.path.join(self.root, f'{index}_{k}.npy'))
+        while True:
+            try:
+                z = np.load(os.path.join(self.root, f'{index}.npy'))
+                k = random.randint(0, self.n_captions[index] - 1)
+                c = np.load(os.path.join(self.root, f'{index}_{k}.npy'))
+            except OSError as e:
+                print(f"Catched exception: {str(e)}. Re-trying...")
+                import time
+                time.sleep(1)
+            else:
+                break
         return z, c
 
 
-class MSCOCO256Features(DatasetFactory):  # the moments calculated by Stable Diffusion image encoder & the contexts calculated by clip
+class MSCOCO256Features(
+    DatasetFactory):  # the moments calculated by Stable Diffusion image encoder & the contexts calculated by clip
     def __init__(self, path, cfg=False, p_uncond=None):
         super().__init__()
         print('Prepare dataset...')
         self.train = MSCOCOFeatureDataset(os.path.join(path, 'train'))
         self.test = MSCOCOFeatureDataset(os.path.join(path, 'val'))
+        print(f'train dset len: {len(self.train)}, test dset len: {len(self.test)}')
         assert len(self.train) == 82783
         assert len(self.test) == 40504
         print('Prepare dataset ok')
@@ -541,5 +587,57 @@ def get_dataset(name, **kwargs):
         return CelebA(**kwargs)
     elif name == 'mscoco256_features':
         return MSCOCO256Features(**kwargs)
+    elif name == 'cc3m_web':
+        return CC3MWeb(**kwargs)
     else:
         raise NotImplementedError(name)
+
+
+class EmbeddingDecoder:
+    def __init__(self, cfg=False, p_uncond=0., empty_token=None):
+        self.cfg = cfg
+        self.p_uncond = p_uncond
+        self.empty_token = empty_token.astype(np.float16).reshape(-1)
+
+    def __call__(self, src):
+        for sample in src:
+            try:
+                if "image.npy" in sample:
+                    sample["image.npy"] = np.frombuffer(sample["image.npy"],
+                                                        dtype='int64')
+                if "text.npy" in sample:
+                    if self.cfg and torch.rand(1) < self.p_uncond:
+                        sample['text.npy'] = self.empty_token
+                    else:
+                        sample["text.npy"] = np.frombuffer(sample["text.npy"], dtype='float16')
+                yield sample
+            except Exception as e:
+                continue
+
+
+class CC3MWeb(DatasetFactory):
+    def __init__(self, cfg=False, p_uncond=None, args=None, step=None):
+        super().__init__()
+        path = args.ctx_path
+        self.prompts, self.contexts = [], []
+        for f in sorted(os.listdir(os.path.join(path, 'run_vis')), key=lambda x: int(x.split('.')[0])):
+            prompt, context = np.load(os.path.join(path, 'run_vis', f), allow_pickle=True)
+            self.prompts.append(prompt)
+            self.contexts.append(context)
+        self.contexts = np.array(self.contexts)
+        self.empty_context = np.load(os.path.join(path, 'empty_context.npy'))
+
+        self.train = get_data(args=args, is_train=True,
+                              embedding_decoder=EmbeddingDecoder(cfg, p_uncond, empty_token=self.empty_context),
+                              epoch=step)
+        self.test = get_data(args=args, is_train=False,
+                             embedding_decoder=EmbeddingDecoder(empty_token=self.empty_context), epoch=step
+                             )
+
+    @property
+    def data_shape(self):
+        raise NotImplementedError
+
+    @property
+    def fid_stat(self):
+        return f'assets/fid_stats/fid_stats_cc3m_val.npz'

@@ -1,129 +1,86 @@
-## All are Worth Words: A ViT Backbone for Diffusion Models
+## MUSE-Pytorch
 
-<img src="uvit.png" alt="drawing" width="400"/>
+This is a PyTorch implementation of MUSE with pre-trained checkpoints on ImageNet and CC3M.
 
+Unlike the original cross-attention conditioning type, we employ an in-context conditioning version of MUSE and adopt the recently proposed [U-ViT](https://github.com/baofff/U-ViT) for its high performance in image generation. A text-to-image version of our implemented pipeline is illustrated below:
 
-This is a PyTorch implementation of the paper [All are Worth Words: A ViT Backbone for Diffusion Models](https://arxiv.org/abs/2209.12152).
+![image-20230505101233172](assets/pipeline.png)
 
+Note:
 
-## Dependency
+1. Due to computational constraints, the released models are notably undertrained. Nonetheless, they can already achieve satisfactory performance, and we release them to facilitate community research. One can also resume training from the released checkpoints for better results.
+
+2. The core functionality of MUSE is implemented in the `MUSE` class (which is only ~60 lines) in `libs/muse.py`.
+
+## Pretrained Models
+The pre-trained models are released in [🤗HuggingFace](https://huggingface.co/nzl-thu/MUSE/tree/main/assets/ckpts), the detailed information is shown below:
+
+| Dataset          |                            Model                             | #Params | #Training iterations | Batch size |       FID       |
+| ---------------- | :----------------------------------------------------------: | ------- | -------------------- | ---------- | :-------------: |
+| ImageNet 256x256 | [U-ViT-B](https://huggingface.co/nzl-thu/MUSE/tree/main/assets/ckpts/imagenet256-450000.ckpt) (depth=13, width=768) | 102M    | 450K                 | 2048       | 3.84 (12 steps) |
+| CC3M             | [U-ViT-Huge](https://huggingface.co/nzl-thu/MUSE/tree/main/assets/ckpts/cc3m-285000.ckpt) (depth=29, width=1152) | 501M    | 285K                 | 2048       | 6.84 (18 steps) |
+
+## Dependencies
 
 ```
 conda install pytorch torchvision torchaudio cudatoolkit=11.3
-pip install accelerate==0.12.0 timm==0.3.2 absl-py ml_collections einops wandb ftfy==6.1.1 transformers==4.23.1
+pip install accelerate==0.12.0 absl-py ml_collections einops wandb ftfy==6.1.1 transformers==4.23.1 loguru
 ```
-
-* This repo is based on [`timm==0.3.2`](https://github.com/rwightman/pytorch-image-models), for which a [fix](https://github.com/rwightman/pytorch-image-models/issues/420#issuecomment-776459842) is needed to work with PyTorch 1.8.1+.
-
-
-
-## Pretrained Models
-
-
-|                                                      Model                                                      | FID  |
-|:---------------------------------------------------------------------------------------------------------------:|:----:|
-|        [CIFAR10](https://drive.google.com/file/d/1yoYyuzR_hQYWU0mkTj659tMTnoCWCMv-/view?usp=share_link)         | 3.11 |
-|      [CelebA 64x64](https://drive.google.com/file/d/13YpbRtlqF1HDBNLNRlKxLTbKbKeLE06C/view?usp=share_link)      | 2.87 |
-|  [ImageNet 64x64 (Mid)](https://drive.google.com/file/d/1igVgRY7-A0ZV3XqdNcMGOnIGOxKr9azv/view?usp=share_link)  | 5.85 |
-| [ImageNet 64x64 (Large)](https://drive.google.com/file/d/19rmun-T7RwkNC1feEPWinIo-1JynpW7J/view?usp=share_link) | 4.26 |
-|    [ImageNet 256x256](https://drive.google.com/file/d/1w7T1hiwKODgkYyMH9Nc9JNUThbxFZgs3/view?usp=share_link)    | 3.40 |
-|    [ImageNet 512x512](https://drive.google.com/file/d/1mkj4aN2utHMBTWQX9l1nYue9vleL7ZSB/view?usp=share_link)    | 4.67 |
-|    [MS-COCO (Small)](https://drive.google.com/file/d/15JsZWRz2byYNU6K093et5e5Xqd4uwA8S/view?usp=share_link)     | 5.95 |
-| [MS-COCO (Small-Deep)](https://drive.google.com/file/d/1gHRy8sn039Wy-iFL21wH8TiheHK8Ky71/view?usp=share_link)   | 5.48 |
-
-
 
 ## Data Preparation
-* ImageNet 64x64: Put the standard ImageNet dataset (which contains the `train` and `val` directory) to `assets/datasets/ImageNet`.
-* ImageNet 256x256 and ImageNet 512x512: Extract ImageNet features according to `scripts/extract_imagenet_feature.py`.
-* MS-COCO: Download COCO 2014 [training](http://images.cocodataset.org/zips/train2014.zip), [validation](http://images.cocodataset.org/zips/val2014.zip) data and [annotations](http://images.cocodataset.org/annotations/annotations_trainval2014.zip). Then extract their features according to `scripts/extract_mscoco_feature.py` `scripts/extract_test_prompt_feature.py` `scripts/extract_empty_feature.py`.
+First, download VQGAN from this [link](https://drive.google.com/file/d/13S_unB87n6KKuuMdyMnyExW0G1kplTbP/view) (from [MAGE](https://github.com/LTH14/mage), thanks!), and put the downloaded VQGAN in `assets/vqgan_jax_strongaug.ckpt`.
 
+* ImageNet 256x256: Extract ImageNet features by running: `python extract_imagenet_feature.py your/imagenet/path`
+* CC3M: TODO
 
-## Evaluation
+## Training & Evaluation
 
-Firstly download reference statistics for FID and the autoencoder (converted from [Stable Diffusion](https://github.com/CompVis/stable-diffusion)) from this [link](https://drive.google.com/drive/folders/1yo-XhqbPue3rp5P57j6QbA5QZx6KybvP?usp=sharing).
-Put the downloaded directory as `assets/fid_stats` and `assets/stable-diffusion`.
+ Download the reference statistics for FID from this [link](https://huggingface.co/nzl-thu/MUSE/tree/main/assets/fid_stats).
+Place the downloaded .npz file in `assets/fid_stats`.
 
-Then compute the FID score:
+Next, download the pre-trained checkpoints from this [link](https://huggingface.co/nzl-thu/MUSE/tree/main/assets/ckpts) to `assets/ckpts` for evaluation or to continue training for more iterations.
 
-```
-# CIFAR10
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval.py --config=configs/cifar10_uvit.py --nnet_path=cifar10_uvit.pth
+#### ImageNet 256x256 (class-conditional)
 
-# CelebA 64x64
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval.py --config=configs/celeba64_uvit.py --nnet_path=celeba_uvit.pth
+```shell
+# export EVAL_CKPT="assets/ckpts/imagenet256-450000.ckpt"  # uncomment this to perform evaluation. Otherwise, perform training.
+export OUTPUT_DIR="output_dir/for/this/experiment"
+mkdir -p $OUTPUT_DIR
 
-# ImageNet 64x64 (Mid)
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval.py --config=configs/imagenet64_uvit_mid.py --nnet_path=imagenet64_uvit_mid.pth
-
-# ImageNet 64x64 (Large)
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval.py --config=configs/imagenet64_uvit_large.py --nnet_path=imagenet64_uvit_large.pth
-
-# ImageNet 256x256
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval_ldm.py --config=configs/imagenet256_uvit.py --nnet_path=imagenet256_uvit.pth
-
-# ImageNet 512x512
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval_ldm.py --config=configs/imagenet512_uvit.py --nnet_path=imagenet512_uvit.pth
-
-# MS-COCO (Small)
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval_t2i_discrete.py --config=configs/mscoco_uvit.py --nnet_path=mscoco_uvit_small.pth
-
-# MS-COCO (Small-Deep)
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args eval_t2i_discrete.py --config=configs/mscoco_uvit.py --config.nnet.depth=16 --nnet_path=mscoco_uvit_small_deep.pth
+accelerate launch --num_processes 8 --mixed_precision fp16 train_t2i_discrete_muse.py \
+ --config=configs/imagenet256_base_vq_jax.py
 ```
 
-* The generated images are stored in a temperary directory, and will be deleted after evaluation. If you want to keep these images, set `--config.sample.path=/save/dir`.
+Expected evaluation results:
 
-
-## Training
-
-
+```shell
+step=450000 fid50000=3.8392620678172307
 ```
-# CIFAR10
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train.py --config=configs/cifar10_uvit.py
 
-# CelebA 64x64
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train.py --config=configs/celeba64_uvit.py 
+#### CC3M (text-to-image)
 
-# ImageNet 64x64 (Mid)
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train.py --config=configs/imagenet64_uvit_mid.py
+```shell
+# export EVAL_CKPT="assets/ckpts/cc3m-285000.ckpt"  # uncomment this to perform evaluation. Otherwise, perform training.
+export OUTPUT_DIR="output_dir/for/this/experiment"
+mkdir -p $OUTPUT_DIR
 
-# ImageNet 64x64 (Mid)
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train.py --config=configs/imagenet64_uvit_large.py
-
-# ImageNet 256x256
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train_ldm.py --config=configs/imagenet256_uvit.py
-
-# ImageNet 512x512
-accelerate_args="--multi_gpu --num_processes 8 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train_ldm.py --config=configs/imagenet512_uvit.py
-
-# MS-COCO (Small)
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train_t2i_discrete.py --config=configs/mscoco_uvit.py
-
-# MS-COCO (Small-Deep)
-accelerate_args="--multi_gpu --num_processes 4 --mixed_precision fp16 --main_process_port $(expr $RANDOM % 10000 + 10000)"
-accelerate launch $accelerate_args train_t2i_discrete.py --config=configs/mscoco_uvit.py --config.nnet.depth=16
+accelerate launch --num_processes 8 --mixed_precision fp16 train_t2i_discrete_wds.py \
+--config=configs/cc3m_xl_vqf16_jax_2048bs_featset_CLIP_G.py
 ```
+
+Expected evaluation results:
+
+```shell
+step=285000 fid30000=6.835978505261096
+```
+
+The generated images are stored in `OUTPUT_DIR/eval_samples`. Each time the script is executed, a sub-directory with timestamp will be created to store the generated images.
 
 
 ## This implementation is based on
 
-* [Extended Analytic-DPM](https://github.com/baofff/Extended-Analytic-DPM) (provide the FID reference statistics on CIFAR10 and CelebA 64x64)
-* [guided-diffusion](https://github.com/openai/guided-diffusion) (provide the FID reference statistics on ImageNet)
-* [pytorch-fid](https://github.com/mseitzer/pytorch-fid) (provide the official implementation of FID to PyTorch)
-* [https://github.com/LuChengTHU/dpm-solver](https://github.com/LuChengTHU/dpm-solver) (provide the sampler)
+* [U-ViT](https://github.com/baofff/U-ViT)
+* [muse-maskgit-pytorch](https://github.com/lucidrains/muse-maskgit-pytorch)
+* [mage](https://github.com/LTH14/mage)
+* [maskgit](https://github.com/google-research/maskgit)
+* [open-clip](https://github.com/mlfoundations/open_clip)
