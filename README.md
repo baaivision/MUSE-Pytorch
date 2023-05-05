@@ -1,6 +1,6 @@
 ## MUSE-Pytorch
 
-This is a PyTorch implementation of MUSE with pre-trained checkpoints on ImageNet and CC3M.
+This is a PyTorch implementation of [MUSE](https://arxiv.org/abs/2301.00704) with pre-trained checkpoints on ImageNet and CC3M.
 
 Unlike the original cross-attention conditioning type, we employ an in-context conditioning version of MUSE and adopt the recently proposed [U-ViT](https://github.com/baofff/U-ViT) for its high performance in image generation. A text-to-image version of our implemented pipeline is illustrated below:
 
