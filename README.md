@@ -33,7 +33,7 @@ First, download VQGAN from this [link](https://drive.google.com/file/d/13S_unB87
 * ImageNet 256x256: Extract ImageNet features by running: `python extract_imagenet_feature.py your/imagenet/path`
 * CC3M: 
   * First, prepare some context features for training by running `python extract_test_prompt_feature.py` and `python extract_empty_feature.py`
-  * Next, prepare the webdataset (TODO)
+  * Next, prepare the webdataset `feature2webdataset.py`
 
 
 ## Training & Evaluation
